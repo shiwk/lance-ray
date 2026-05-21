@@ -1,4 +1,5 @@
 import os
+import logging
 import sys
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
@@ -10,6 +11,7 @@ T = TypeVar("T")
 _NAMESPACE_CACHE_SIZE = int(os.environ.get("LANCE_RAY_NAMESPACE_CACHE_SIZE", "16"))
 
 _PYLANCE_5 = (5, 0, 0)
+_logger = logging.getLogger(__name__)
 
 
 def normalize_initial_bases(
@@ -253,3 +255,108 @@ else:
 
     def array_split(iterable: Iterable[T], n: int) -> list[Sequence[T]]:
         return list(map(list, divide(n, iterable)))
+
+
+def resolve_namespace_storage_options(
+    namespace_impl: Optional[str],
+    namespace_properties: Optional[dict[str, str]],
+    table_id: Optional[list[str]],
+) -> Optional[dict[str, str]]:
+    """Resolve storage options from namespace via describe_table.
+
+    Returns the storage_options dict if the namespace vends credentials,
+    or None if it does not.
+    """
+    if not has_namespace_params(namespace_impl, table_id):
+        return None
+
+    namespace = get_or_create_namespace(namespace_impl, namespace_properties)
+    if namespace is None:
+        return None
+
+    try:
+        from lance_namespace import DescribeTableRequest
+
+        resp = namespace.describe_table(DescribeTableRequest(id=table_id))
+        if resp.storage_options:
+            return dict(resp.storage_options)
+    except Exception as e:
+        _logger.debug("resolve_namespace_storage_options failed for %s: %s", table_id, e)
+
+    return None
+
+
+def get_namespace_kwargs_with_fallback(
+    namespace_impl: Optional[str],
+    namespace_properties: Optional[dict[str, str]],
+    table_id: Optional[list[str]],
+    user_storage_options: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    """Return kwargs for pylance with Iceberg-style credential fallback.
+
+    If namespace vends credentials, use namespace integration (supports auto-refresh).
+    If not, fall back to user-provided storage_options.
+    """
+    result: dict[str, Any] = {}
+    merged = dict(user_storage_options or {})
+
+    ns_opts = resolve_namespace_storage_options(
+        namespace_impl, namespace_properties, table_id
+    )
+
+    if ns_opts:
+        merged.update(ns_opts)
+        result.update(get_namespace_kwargs(namespace_impl, namespace_properties, table_id))
+    elif not merged:
+        result.update(get_namespace_kwargs(namespace_impl, namespace_properties, table_id))
+    else:
+        _logger.info(
+            "Namespace did not vend credentials for %s, using user-provided storage_options.",
+            table_id,
+        )
+
+    if merged:
+        result["storage_options"] = merged
+
+    return result
+
+
+def get_write_fragments_kwargs_with_fallback(
+    namespace_impl: Optional[str],
+    namespace_properties: Optional[dict[str, str]],
+    table_id: Optional[list[str]],
+    user_storage_options: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    """Return kwargs for write_fragments with Iceberg-style credential fallback.
+
+    Same three-tier logic as get_namespace_kwargs_with_fallback, but returns
+    kwargs suitable for lance.fragment.write_fragments instead of LanceDataset.
+    """
+    result: dict[str, Any] = {}
+    merged = dict(user_storage_options or {})
+
+    ns_opts = resolve_namespace_storage_options(
+        namespace_impl, namespace_properties, table_id
+    )
+
+    if ns_opts:
+        merged.update(ns_opts)
+        result.update(get_write_fragments_kwargs(
+            namespace_impl, namespace_properties, table_id
+        ))
+    elif not merged:
+        result.update(get_write_fragments_kwargs(
+            namespace_impl, namespace_properties, table_id
+        ))
+    else:
+        _logger.info(
+            "Namespace did not vend credentials for %s, "
+            "using user-provided storage_options.",
+            table_id,
+        )
+
+    if merged:
+        result["storage_options"] = merged
+
+    return result
+

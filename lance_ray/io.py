@@ -16,6 +16,7 @@ from .datasink import LanceDatasink
 from .datasource import LanceDatasource
 from .utils import (
     get_namespace_kwargs,
+    get_namespace_kwargs_with_fallback,
     has_namespace_params,
     materialize_initial_bases,
     normalize_initial_bases,
@@ -439,15 +440,17 @@ def _handle_fragment(
     """
 
     def func(fragment_id: int):
-        namespace_kwargs = get_namespace_kwargs(
-            namespace_impl, namespace_properties, table_id
+        ns_kwargs = get_namespace_kwargs_with_fallback(
+            namespace_impl, namespace_properties, table_id,
+            user_storage_options=storage_options,
         )
+        resolved_storage_options = ns_kwargs.pop("storage_options", storage_options)
 
         lance_ds = LanceDataset(
             uri=uri,
-            storage_options=storage_options,
+            storage_options=resolved_storage_options,
             version=read_version,
-            **namespace_kwargs,
+            **ns_kwargs,
         )
         fragment = lance_ds.get_fragment(fragment_id)
         fragment_meta, schema = fragment.merge_columns(
@@ -517,15 +520,17 @@ def add_columns(
     """
     storage_options = storage_options or {}
 
-    namespace_kwargs = get_namespace_kwargs(
-        namespace_impl, namespace_properties, table_id
+    ns_kwargs = get_namespace_kwargs_with_fallback(
+        namespace_impl, namespace_properties, table_id,
+        user_storage_options=storage_options,
     )
+    resolved_storage_options = ns_kwargs.pop("storage_options", storage_options)
 
     lance_ds = LanceDataset(
         uri=uri,
-        storage_options=storage_options,
+        storage_options=resolved_storage_options,
         version=read_version,
-        **namespace_kwargs,
+        **ns_kwargs,
     )
     fragment_ids = [f.metadata.id for f in lance_ds.get_fragments()]
     pool = Pool(processes=concurrency, ray_remote_args=ray_remote_args)
@@ -568,12 +573,17 @@ def add_columns(
     if new_schema is None:
         raise ValueError("No schema for new fragment found")
     op = LanceOperation.Merge(commit_messages, new_schema)
+    commit_ns_kwargs = get_namespace_kwargs_with_fallback(
+        namespace_impl, namespace_properties, table_id,
+        user_storage_options=storage_options,
+    )
+    commit_storage_options = commit_ns_kwargs.pop("storage_options", storage_options)
     lance_ds.commit(
         uri,
         op,
         read_version=lance_ds.version,
-        storage_options=storage_options,
-        **namespace_kwargs,
+        storage_options=commit_storage_options,
+        **commit_ns_kwargs,
     )
 
 

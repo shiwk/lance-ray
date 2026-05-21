@@ -12,6 +12,7 @@ from ray.data.datasource.datasource import ReadTask
 from .utils import (
     array_split,
     get_namespace_kwargs,
+    get_namespace_kwargs_with_fallback,
     get_or_create_namespace,
 )
 
@@ -100,9 +101,9 @@ class LanceDatasource(Datasource):
 
             dataset_options = self._dataset_options.copy()
             dataset_options["uri"] = self._uri
-            dataset_options["storage_options"] = self._storage_options
-            ns_kwargs = get_namespace_kwargs(
-                self._namespace_impl, self._namespace_properties, self._table_id
+            ns_kwargs = get_namespace_kwargs_with_fallback(
+                self._namespace_impl, self._namespace_properties, self._table_id,
+                user_storage_options=self._storage_options,
             )
             dataset_options.update(ns_kwargs)
             base_store_params_kwargs = {}
@@ -230,9 +231,11 @@ def _read_fragments_with_retry(
     scanner_options: dict[str, Any],
     retry_params: dict[str, Any],
 ) -> Iterator[pa.Table]:
-    namespace_kwargs = get_namespace_kwargs(
-        namespace_impl, namespace_properties, table_id
+    ns_kwargs = get_namespace_kwargs_with_fallback(
+        namespace_impl, namespace_properties, table_id,
+        user_storage_options=storage_options,
     )
+    resolved_storage_options = ns_kwargs.pop("storage_options", storage_options)
     base_store_params_kwargs = {}
     if base_store_params:
         base_store_params_kwargs = {"base_store_params": base_store_params}
@@ -242,9 +245,9 @@ def _read_fragments_with_retry(
     lance_ds = lance.LanceDataset(
         uri,
         version=version,
-        storage_options=storage_options,
+        storage_options=resolved_storage_options,
         serialized_manifest=manifest,
-        **namespace_kwargs,
+        **ns_kwargs,
         **base_store_params_kwargs,
     )
 

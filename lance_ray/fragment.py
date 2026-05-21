@@ -27,7 +27,7 @@ __all__ = [
 
 from .pandas import pd_to_arrow
 from .utils import (
-    get_write_fragments_kwargs,
+    get_write_fragments_kwargs_with_fallback,
     materialize_initial_bases,
     normalize_initial_bases,
 )
@@ -93,9 +93,12 @@ def write_fragment(
             "max_backoff_s": 0,
         }
 
-    write_kwargs = get_write_fragments_kwargs(
-        namespace_impl, namespace_properties, table_id
+    fallback = get_write_fragments_kwargs_with_fallback(
+        namespace_impl, namespace_properties, table_id,
+        user_storage_options=storage_options,
     )
+    storage_options = fallback.pop("storage_options", storage_options)
+    write_kwargs = fallback
     if initial_bases:
         initial_bases_kwargs = {
             "initial_bases": materialize_initial_bases(initial_bases)
